@@ -277,6 +277,8 @@ invariant [unused_is_untouched] ¬ used A → ¬ stamped K E A ∧ ¬ polled N A
 invariant [written_is_settled] written A ∧ stamped K E A → ¬ (owner (partOf K) (attNode A) ∧ pEpoch (partOf K) = E)
 invariant [dead_nodes_hold_nothing] ¬ alive N → ¬ polled N A ∧ ¬ inflight N K A ∧ ¬ orphan N K A ∧ ¬ reconcile N
 
+set_option veil.smt.trust false
+
 #gen_spec
 
 #model_check { node := Fin 2, key := Fin 1, part := Fin 1, epoch := Fin 3, attempt := Fin 4 }

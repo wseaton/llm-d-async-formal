@@ -20,5 +20,6 @@ worker, an orphan entry, a pending reconcile, or a `Poll` still booking it.
 | `CycleLock` | `Retry` and `Undispatch` hold `c.cycle` | no violation in 71,889 states (2 nodes, 3 epochs, 3 attempts) |
 | `DispatchToken` | every dispatch writes a fresh token that all fences and maps compare | no violation in 1,577,504 states, and `#check_invariants` proves all 24 clauses inductive for unbounded nodes, keys, partitions, epochs and tokens |
 
-`#check_invariants` trusts cvc5's unsat results unless
-`set_option veil.smt.trust false` is set.
+`DispatchToken` sets `veil.smt.trust false` before `#gen_spec`, so cvc5's
+answers are reconstructed into Lean proofs and checked by the kernel rather than
+trusted. The option has no effect if set after `#gen_spec`.
