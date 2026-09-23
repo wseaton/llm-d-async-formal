@@ -3,8 +3,8 @@
 [Veil](https://github.com/verse-lab/veil) (Lean 4) models of llm-d-async's
 Postgres transport (`producer-sql/sqlqueue`, llm-d/llm-d-async#452): a proof
 that no request can get stuck, a check that the Go code behaves like the proved
-model, and a proof that the `sql-quota` gate never runs more requests than its
-concurrency limit.
+model, and proofs that the `sql-quota` gate never runs more requests than its
+concurrency limit or admits more than its rate limit.
 
 ```mermaid
 flowchart LR
@@ -81,6 +81,12 @@ caller to release it, for as long as the holder heartbeats. #452 fixed both in
 it once nothing the process knows of names it. Both reproduce as Go tests
 against Postgres through a proxy that drops a reply after the commit.
 
+Rate limits had a separate flaw. Every gate on a key shared one admission log,
+and each call deleted the entries older than its own window, so a gate with a
+short window emptied the log of a gate with a long one. `QuotaRateShared` finds
+the long-window gate admitting three requests under a limit of two in five
+steps. #452 fixed it in `c12076a` by keeping a log per key and window.
+
 ## Models
 
 Each Postgres statement is one atomic action. A `Consumer` method is split where
@@ -96,13 +102,17 @@ worker, an orphan entry, a pending reconcile, or a `Poll` still booking it.
 | `CycleLock` | `Retry` and `Undispatch` hold `c.cycle` | no violation in 71,889 states (2 nodes, 3 epochs, 3 attempts) |
 | `QuotaSlots` | `sql-quota` concurrency slots at `d187fff` | `#model_check` finds a leaked slot; `sat trace`s reproduce the over-admission through a retried release and the leak through a lost grant |
 | `QuotaRetire` | a statement error retires the holder; #452 implements it in `640b603` | no violation in 3,835,532 states, and `#check_invariants` proves all 21 clauses inductive, `exact` and `no_leak` among them, for unbounded processes, holders, keys, slots and requests |
+| `QuotaRateShared` | `sql-quota` rate limits at `640b603`, one log per key | `#model_check` finds a gate admitting past its limit |
+| `QuotaRateWindowed` | one log per key and window; #452 implements it in `c12076a` | no violation in 10,400 states, and `#check_invariants` proves the per-window limit inductive, assuming the database clock never goes back |
 | `DispatchToken` | every dispatch writes a fresh token that all fences and maps compare; #452 implements it as `dispatch_attempt` in `249c497` | no violation in 3,486,375 states, and `#check_invariants` proves all 24 clauses inductive across all 17 actions for unbounded nodes, keys, partitions, epochs and tokens |
 
 `DispatchToken` sets `veil.smt.trust false` before `#gen_spec`, so cvc5's
 answers are reconstructed into Lean proofs and checked by the kernel rather than
 trusted. The option has no effect if set after `#gen_spec`.
 
-The quota models abstract a count as slot indices: `slot` has `limit` elements,
+Rate-limit models express windows through a relation `expired w t s` with three
+axioms (only older entries expire, expiry is permanent, and anything older than
+an expired entry is expired) rather than arithmetic. The quota models abstract a count as slot indices: `slot` has `limit` elements,
 a grant takes an index no live holder owns, and `exact` says no two running
 requests share one. `QuotaRetire` also sets `veil.smt.trust false`. It assumes a
 holder is renewed while any of its grants runs; a lease that lapses under a
