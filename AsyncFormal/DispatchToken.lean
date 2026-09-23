@@ -10,7 +10,7 @@ Undispatch and reconcile fence on the token, and `Consumer.inflight` and
 `Consumer.orphans` remember it, so bookkeeping from one dispatch can never
 match another dispatch under the same epoch.
 
-The `attempt` sort is the token: it is drawn at dispatch, not at hand-out.
+The `attempt` sort is the token: `dispatch` takes a fresh one, as the sequence hands out.
 -/
 
 veil module DispatchToken
@@ -74,9 +74,9 @@ after_init {
 }
 
 -- `Store.AcquirePartitions`: take the partition and bump its epoch.
-action acquire (n : node) (p : part) {
+action acquire (n : node) (p : part) (e : epoch) {
   require alive n ∧ ¬ polling n
-  let e :| le (pEpoch p) e ∧ e ≠ pEpoch p
+  require le (pEpoch p) e ∧ e ≠ pEpoch p
   owner p N := false
   owner p n := true
   pEpoch p := e
@@ -105,10 +105,10 @@ action resetStale (n : node) (k : key) (e : epoch) (a : attempt) {
 }
 
 -- `Store.Dispatch` on one row, as seen by `Consumer.Poll`; the token comes from a sequence.
-action dispatch (n : node) (k : key) {
+action dispatch (n : node) (k : key) (a : attempt) {
   require alive n ∧ pending k
   require owner (partOf k) n ∧ ¬ draining (partOf k)
-  let a :| ¬ used a
+  require ¬ used a
   let e := pEpoch (partOf k)
   pending k := false
   stamped k e a := true
@@ -120,10 +120,10 @@ action dispatch (n : node) (k : key) {
 }
 
 -- `Store.Dispatch` committed but `Consumer.Poll` got an error back.
-action dispatchLost (n : node) (k : key) {
+action dispatchLost (n : node) (k : key) (a : attempt) {
   require alive n ∧ pending k
   require owner (partOf k) n ∧ ¬ draining (partOf k)
-  let a :| ¬ used a
+  require ¬ used a
   let e := pEpoch (partOf k)
   pending k := false
   stamped k e a := true
@@ -131,6 +131,12 @@ action dispatchLost (n : node) (k : key) {
   attNode a := n
   attKey a := k
   attEpoch a := e
+  reconcile n := true
+}
+
+-- `Store.Dispatch` returned an error without committing; `Consumer.Poll` cannot tell, so it reconciles.
+action pollFailed (n : node) {
+  require alive n
   reconcile n := true
 }
 
@@ -342,5 +348,129 @@ unsat trace [retry_then_reconcile_cannot_strand] {
   done
   assert (∃ n k e a, stranded n k e a)
 }
+
+-- Replay of traces recorded by `TestModelTrace` in llm-d-async `producer-sql/sqlqueue`.
+
+abbrev TraceState := State (FieldConcreteType (Fin 3) (Fin 8) (Fin 64) (Fin 128) (Fin 256))
+abbrev TraceTheory := Theory (Fin 3) (Fin 8) (Fin 64) (Fin 128) (Fin 256)
+
+def traceInit (th : TraceTheory) :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th (default : TraceState) initializer
+
+def trace_acquire (th : TraceTheory) (st : TraceState) n p e :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (acquire n p e)
+def trace_release (th : TraceTheory) (st : TraceState) n p :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (release n p)
+def trace_setDraining (th : TraceTheory) (st : TraceState) n p d :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (setDraining n p d)
+def trace_resetStale (th : TraceTheory) (st : TraceState) n k e a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (resetStale n k e a)
+def trace_dispatch (th : TraceTheory) (st : TraceState) n k a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (dispatch n k a)
+def trace_dispatchLost (th : TraceTheory) (st : TraceState) n k a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (dispatchLost n k a)
+def trace_book (th : TraceTheory) (st : TraceState) a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (book a)
+def trace_ackCommit (th : TraceTheory) (st : TraceState) a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (ackCommit a)
+def trace_requeueCommit (th : TraceTheory) (st : TraceState) a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (requeueCommit a)
+def trace_ackError (th : TraceTheory) (st : TraceState) a l :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (ackError a l)
+def trace_requeueError (th : TraceTheory) (st : TraceState) a l :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (requeueError a l)
+def trace_done (th : TraceTheory) (st : TraceState) a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (done a)
+def trace_abandon (th : TraceTheory) (st : TraceState) a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (abandon a)
+def trace_undispatchOrphan (th : TraceTheory) (st : TraceState) n k a :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (undispatchOrphan n k a)
+def trace_reconcileInFlight (th : TraceTheory) (st : TraceState) n :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (reconcileInFlight n)
+def trace_pollFailed (th : TraceTheory) (st : TraceState) n :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (pollFailed n)
+def trace_crash (th : TraceTheory) (st : TraceState) n :=
+  __veil_exec_action% { node := Fin 3, key := Fin 8, part := Fin 64, epoch := Fin 128, attempt := Fin 256 } th st (crash n)
+
+def traceOne (what : String) : List (Veil.ExecutionResult ε TraceState α) → Except String TraceState
+  | [.success _ st] => .ok st
+  | [] => .error s!"{what} is not enabled"
+  | [_] => .error s!"{what} failed an assertion or diverged"
+  | rs => .error s!"{what} has {rs.length} outcomes, expected one"
+
+def traceFin (b : Nat) [NeZero b] (what : String) (v : Nat) : Except String (Fin b) :=
+  if h : v < b then .ok ⟨v, h⟩ else .error s!"{what} {v} is outside Fin {b}"
+
+def traceStep (th : TraceTheory) (st : TraceState) (act : String) (args : List Nat) : Except String TraceState := do
+  let what := s!"{act} {args}"
+  match act, args with
+  | "acquire", [v0, v1, v2] => do
+    let n ← traceFin 3 "node" v0
+    let p ← traceFin 64 "part" v1
+    let e ← traceFin 128 "epoch" v2
+    traceOne what (trace_acquire th st n p e)
+  | "release", [v0, v1] => do
+    let n ← traceFin 3 "node" v0
+    let p ← traceFin 64 "part" v1
+    traceOne what (trace_release th st n p)
+  | "setDraining", [v0, v1, v2] => do
+    let n ← traceFin 3 "node" v0
+    let p ← traceFin 64 "part" v1
+    let d := v2 != 0
+    traceOne what (trace_setDraining th st n p d)
+  | "resetStale", [v0, v1, v2, v3] => do
+    let n ← traceFin 3 "node" v0
+    let k ← traceFin 8 "key" v1
+    let e ← traceFin 128 "epoch" v2
+    let a ← traceFin 256 "attempt" v3
+    traceOne what (trace_resetStale th st n k e a)
+  | "dispatch", [v0, v1, v2] => do
+    let n ← traceFin 3 "node" v0
+    let k ← traceFin 8 "key" v1
+    let a ← traceFin 256 "attempt" v2
+    traceOne what (trace_dispatch th st n k a)
+  | "dispatchLost", [v0, v1, v2] => do
+    let n ← traceFin 3 "node" v0
+    let k ← traceFin 8 "key" v1
+    let a ← traceFin 256 "attempt" v2
+    traceOne what (trace_dispatchLost th st n k a)
+  | "book", [v0] => do
+    let a ← traceFin 256 "attempt" v0
+    traceOne what (trace_book th st a)
+  | "ackCommit", [v0] => do
+    let a ← traceFin 256 "attempt" v0
+    traceOne what (trace_ackCommit th st a)
+  | "requeueCommit", [v0] => do
+    let a ← traceFin 256 "attempt" v0
+    traceOne what (trace_requeueCommit th st a)
+  | "ackError", [v0, v1] => do
+    let a ← traceFin 256 "attempt" v0
+    let l := v1 != 0
+    traceOne what (trace_ackError th st a l)
+  | "requeueError", [v0, v1] => do
+    let a ← traceFin 256 "attempt" v0
+    let l := v1 != 0
+    traceOne what (trace_requeueError th st a l)
+  | "done", [v0] => do
+    let a ← traceFin 256 "attempt" v0
+    traceOne what (trace_done th st a)
+  | "abandon", [v0] => do
+    let a ← traceFin 256 "attempt" v0
+    traceOne what (trace_abandon th st a)
+  | "undispatchOrphan", [v0, v1, v2] => do
+    let n ← traceFin 3 "node" v0
+    let k ← traceFin 8 "key" v1
+    let a ← traceFin 256 "attempt" v2
+    traceOne what (trace_undispatchOrphan th st n k a)
+  | "reconcileInFlight", [v0] => do
+    let n ← traceFin 3 "node" v0
+    traceOne what (trace_reconcileInFlight th st n)
+  | "pollFailed", [v0] => do
+    let n ← traceFin 3 "node" v0
+    traceOne what (trace_pollFailed th st n)
+  | "crash", [v0] => do
+    let n ← traceFin 3 "node" v0
+    traceOne what (trace_crash th st n)
+  | _, _ => .error s!"unknown step {what}"
 
 end DispatchToken

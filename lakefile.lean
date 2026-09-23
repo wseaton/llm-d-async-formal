@@ -7,3 +7,6 @@ package «llm-d-async-formal»
 
 @[default_target]
 lean_lib AsyncFormal
+
+lean_exe replay where
+  root := `Replay

@@ -23,3 +23,40 @@ worker, an orphan entry, a pending reconcile, or a `Poll` still booking it.
 `DispatchToken` sets `veil.smt.trust false` before `#gen_spec`, so cvc5's
 answers are reconstructed into Lean proofs and checked by the kernel rather than
 trusted. The option has no effect if set after `#gen_spec`.
+
+## Conformance
+
+The proof is about the model. `scripts/conformance.sh` checks the Go code
+against it:
+
+```
+TEST_POSTGRES_URL=postgres://... scripts/conformance.sh <llm-d-async checkout> [seeds]
+```
+
+`TestModelTrace` in `producer-sql/sqlqueue` drives real `Consumer`s against
+Postgres with a seeded random walk: polls, acks, retries, undispatches,
+rebalances, lease lapses, crashes, and writes that fail before committing. It
+also splits operations where production runs them concurrently: a store call
+now and its bookkeeping later, `AcquirePartitions` before the `ResetStale` of
+the next rebalance, and a dispatch that commits under a `Poll` error. Test-only
+triggers record statement order. Each operation is written out as the model
+steps it performed and the state it left: the tables plus each consumer's
+in-flight, orphan and reconcile bookkeeping.
+
+`replay` runs those steps in `DispatchToken`'s executable semantics. Every step
+must be enabled, and after every operation the model state must equal the
+recorded one.
+
+Six injected bugs, each caught:
+
+| Mutation | Traces rejected |
+| --- | --- |
+| `Ack` ignores the partition epoch | 1 / 100 |
+| `Retry` ignores the owner | 1 / 400 |
+| `Poll` keeps the orphan entry | 1 / 100 |
+| `ResetStale` resets current-epoch rows | 84 / 100 |
+| `doneStamps` ignores the attempt | 37 / 100 |
+| `reconcileInFlight` trusts any tracked key | 5 / 100 |
+
+The replay also found the model missing `pollFailed`: `Consumer.Poll` sets
+`reconcile` on any `Dispatch` error, including one that never committed.
