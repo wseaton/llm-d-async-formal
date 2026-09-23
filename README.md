@@ -18,7 +18,7 @@ worker, an orphan entry, a pending reconcile, or a `Poll` still booking it.
 | --- | --- | --- |
 | `SqlQueue` | #452 at `4ed4210` | `#model_check` finds a stranded row. Two `sat trace`s reproduce `TestConsumerRetryBookkeepingKeepsTheAttemptPollHandedOut` and `TestConsumerReconcileIgnoresTheBookkeepingOfAFinishedRetry`. |
 | `CycleLock` | `Retry` and `Undispatch` hold `c.cycle` | no violation in 71,889 states (2 nodes, 3 epochs, 3 attempts) |
-| `DispatchToken` | every dispatch writes a fresh token that all fences and maps compare | no violation in 1,577,504 states, and `#check_invariants` proves all 24 clauses inductive for unbounded nodes, keys, partitions, epochs and tokens |
+| `DispatchToken` | every dispatch writes a fresh token that all fences and maps compare; #452 implements it as `dispatch_attempt` in `249c497` | no violation in 1,577,504 states, and `#check_invariants` proves all 24 clauses inductive for unbounded nodes, keys, partitions, epochs and tokens |
 
 `DispatchToken` sets `veil.smt.trust false` before `#gen_spec`, so cvc5's
 answers are reconstructed into Lean proofs and checked by the kernel rather than
